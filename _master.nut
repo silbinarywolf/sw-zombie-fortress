@@ -45,10 +45,6 @@ zf_rageCantUseMessageTimer <- {};
 // tf_gamerules holds the tf_gamerules game objects after the round starts
 tf_gamerules <- null;
 
-// ::CTFGameRules.CanChangeTeam <- function(iCurrentTeam) {
-// 	return false;
-// }
-
 ::SetZombieSpawnTime <- function(time) {
 	if (tf_gamerules == null || !tf_gamerules.ValidateScriptScope()) {
 		return;
