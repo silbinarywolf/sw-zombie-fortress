@@ -168,7 +168,7 @@ tf_gamerules <- null;
 
 	// 1. Handle zombie regeneration.
 	//    Zombies regenerate health based on class and number of nearby
- 	//    zombies (hoarde bonus). Zombies decay health when overhealed.
+	 //    zombies (hoarde bonus). Zombies decay health when overhealed.
 	if (health < maxHealth) {
 		local bonus = 0;
 		switch (classIndex) {
