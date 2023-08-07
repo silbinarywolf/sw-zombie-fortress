@@ -1,7 +1,7 @@
 # Zombie Fortress Classic
 *Version:* Pre-alpha v0.1.0
 
-This VScript mod aims to be a faithful reimplementation of the Zombie Fortress mode made originally with SourceMod.
+This VScript mod aims to be a faithful reimplementation of the Zombie Fortress mode made originally with SourceMod for Team Fortress 2.
 
 ## Install
 
@@ -9,13 +9,15 @@ This VScript mod aims to be a faithful reimplementation of the Zombie Fortress m
 
 - Download the latest release:
 
-- Go to the `steamapps\common\Team Fortress 2 Dedicated Server\tf` folder
+- For Dedicated servers:
+    - Go to your `steamapps\common\Team Fortress 2 Dedicated Server\tf` folder
+
+- For Hosting in-game:
+    - Go to your `steamapps\common\Team Fortress 2\tf` folder
 
 - Copy-paste the contents of the zip into it.
 
-## Requirements
-
-* Team Fortress 2
+- Reload the current map and you'll be playing the Zombie Fortress game mode.
 
 ## Credits
 

@@ -68,7 +68,8 @@ tf_gamerules <- null;
 		NetProps.SetPropFloat(tf_gamerules, "SetRedTeamRespawnWaveTime", time);
 		EntFireByHandle(tf_gamerules, "SetRedTeamRespawnWaveTime", time.tostring(), 0, null, null);
 	}
-	printl("-- Updated Zombie spawn time (logic doesnt work yet for some reason)")
+	// DEBUG
+	// printl("-- Updated Zombie spawn time (logic doesnt seem to work yet for some reason? or suicide affects timers...)")
 }
 
 ::HandleHumanOnTick <- function(player) {
@@ -347,7 +348,7 @@ function Init() {
 	}
 
 	// DEBUG
-	printl("-- Init ZF");
+	// printl("-- Init ZF");
 
 	// In regular map, blue is attacking, so swap the teams
 	local is_control_point_map = (
@@ -460,6 +461,7 @@ function Init() {
 	if (player == null || !player.IsValid()) {
 		return;
 	}
+	// DEBUG
 	//printl("-- Player Spawned --");
 
 	// Set max speed
@@ -486,9 +488,6 @@ function Init() {
 		// items equipped ,etc
 		NetProps.SetPropFloat(player, "m_flMaxspeed", maxMoveSpeed);
 	}
-
-	//player.SetForcedTauntCam(1); // enable third person
-	//player.SetCustomModelVisibleToSelf(true); // show model of self
 }
 
 ::ChangeClass <- function(player, classIndex) {
@@ -524,26 +523,12 @@ function Init() {
 	}
 }
 
-// ::PostClassChangeZombieInvalid <- function() {
-// 	local player = self;
-// 	if (player == null || !player.IsValid()) {
-// 		return;
-// 	}
-// 	// local defaultZombieClass = Constants.ETFClass.TF_CLASS_SCOUT;
-// 	// NetProps.SetPropInt(player, "m_PlayerClass.m_iClass", defaultZombieClass);
-// 	// NetProps.SetPropInt(player, "m_PlayerClass.m_iDesiredPlayerClass", defaultZombieClass);
-// 	// player.SetPlayerClass(defaultZombieClass);
-// 	// player.ForceRegenerateAndRespawn();
-
-// 	ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Must select a valid zombie class: Scout, Heavy or Spy");
-// 	ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "[ZF] Valid zombies: Scout, Heavy, Spy.");
-// }
-
 function OnGameEvent_teamplay_round_start(params) {
 	if (!hasInitialized) {
 		return;
 	}
-	printl("-- Round Start -- ");
+	// DEBUG
+	// printl("-- Round Start -- ");
 
 	// reset globals
 	hasSetupEnded = false;
@@ -616,7 +601,7 @@ function OnGameEvent_teamplay_round_start(params) {
 	// Add our "::TickEverySecond" function to team_round_timer
 	local team_round_timer = Entities.FindByClassname(null, "team_round_timer");
 	if (team_round_timer == null) {
-		printl("Team round timer not found");
+		printl("WARNING: Team round timer not found. Zombie regen and survivor behaviour won't work properly");
 		return;
 	}
 	team_round_timer.ValidateScriptScope();
@@ -628,11 +613,6 @@ function OnGameEvent_teamplay_round_start(params) {
 	// This seemingly does nothing, at least nothing visible on client.
 	tf_gamerules = Entities.FindByClassname(null, "tf_gamerules");
 	if (tf_gamerules != null && tf_gamerules.ValidateScriptScope()) {
-		// tf_gamerules.GetScriptScope().CanPlayerChooseClass <- function(player, classIndex) {
-		// 	printl("invalid class!!!")
-		// 	return false;
-		// }
-
 		// note(jae): 2023-08-06
 		// Currently this doesn't seem to work or do anything.
 		local humanGoal = "Survive the zombies";
@@ -646,62 +626,6 @@ function OnGameEvent_teamplay_round_start(params) {
 		}
 		//EntFireByHandle(tf_gamerules, "SetBlueTeamGoalString", zombieGoal, 0, null, null);
 		//EntFireByHandle(tf_gamerules, "SetRedTeamGoalString", humanGoal, 0, null, null);
-
-		// Setup bot classes
-		// local humanBotRoster = null;
-		// local zombieBotRoster = null;
-		// for (local ent = null; ent = Entities.FindByClassname(ent, "bot_roster");) {
-		// 	// TODO: find existing for hammer maps with this
-		// 	break;
-		// }
-		// if (humanBotRoster == null) {
-		// 	humanBotRoster = SpawnEntityFromTable("bot_roster",{});
-		// 	humanBotRoster.ValidateScriptScope();
-		// 	humanBotRoster.SetTeam(Constants.ETFTeam.TF_TEAM_BLUE);
-		// 	NetProps.SetPropString(humanBotRoster, "m_teamName", "blue");
-		// }
-		// if (zombieBotRoster == null) {
-		// 	zombieBotRoster = SpawnEntityFromTable("bot_roster",{});
-		// 	zombieBotRoster.ValidateScriptScope();
-		// 	zombieBotRoster.SetTeam(Constants.ETFTeam.TF_TEAM_RED);
-		// 	NetProps.SetPropString(zombieBotRoster, "m_teamName", "red");
-		// }
-		// local humanBotRoster = NetProps.GetPropEntity(tf_gamerules, "m_hBlueBotRoster");
-		// if (humanBotRoster != null) {
-		// 	printl("-- HAS BLUE BOT ROSTER")
-
-		// 	// Setup human bot classes
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_SOLDIER);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_PYRO);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_DEMOMAN);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_ENGINEER);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_MEDIC);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_SNIPER);
-
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_SCOUT);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_HEAVYWEAPONS);
-		// 	NetProps.SetPropBoolArray(humanBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_SPY);
-		// } else {
-		// 	printl("-- NULL BLUE BOT ROSTER")
-		// }
-		// local zombieBotRoster = NetProps.GetPropEntity(tf_gamerules, "m_hRedBotRoster");
-		// if (zombieBotRoster != null) {
-		// 	printl("-- HAS RED BOT ROSTER")
-
-		// 	// Setup zombie bot classes
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_SCOUT);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_HEAVYWEAPONS);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", true, Constants.ETFClass.TF_CLASS_SPY);
-
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_SOLDIER);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_PYRO);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_DEMOMAN);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_ENGINEER);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_MEDIC);
-		// 	NetProps.SetPropBoolArray(zombieBotRoster, "m_bAllowedClasses", false, Constants.ETFClass.TF_CLASS_SNIPER);
-		// } else {
-		// 	printl("-- NULL RED BOT ROSTER")
-		// }
 	}
 
 	SetZombieSpawnTime(8.0);
@@ -730,13 +654,6 @@ function OnGameEvent_player_builtobject(params) {
 	}
 }
 
-function OnGameEvent_player_calledformedic(params) {
-	if (!hasInitialized) {
-		return;
-	}
-	printl("CALLED FOR MEDIC")
-}
-
 function OnGameEvent_player_death(params) {
 	if (!hasInitialized) {
 		return;
@@ -757,14 +674,15 @@ function OnGameEvent_player_death(params) {
 	case Constants.ERoundState.GR_STATE_RND_RUNNING:
 		switch (team) {
 		case humanTeamNumber:
-			// Do nothing if human died during setup
 			if (!hasSetupEnded) {
+				// If human died during setup, we just remove their ammo packs
+				// and don't switch them to zombie.
+
 				// Remove dropped ammopacks from humans during setup phase
 				//
 				// Mostly exists to telegraph to players that they can't spawn ammo packs
 				// themselves in preparation for zombies.
-				local ent = null;
-				while (ent = Entities.FindByClassname(ent, "tf_ammo_pack")) {
+				for (local ent = null; ent = Entities.FindByClassname(ent, "tf_ammo_pack");) {
 					if (ent.GetOwner() == player) {
 						ent.Kill();
 					}
@@ -783,10 +701,6 @@ function OnGameEvent_player_death(params) {
 					continue;
 				}
 				local team = player.GetTeam();
-				if (!IsValidTeam(team)) {
-					// ignore other teams
-					continue;
-				}
 				switch (team) {
 				case humanTeamNumber:
 					humanCount++;
@@ -804,8 +718,7 @@ function OnGameEvent_player_death(params) {
 			break;
 		case zombieTeamNumber:
 			// Remove dropped ammopacks from zombies.
-			local ent = null;
-			while (ent = Entities.FindByClassname(ent, "tf_ammo_pack")) {
+			for (local ent = null; ent = Entities.FindByClassname(ent, "tf_ammo_pack");) {
 				if (ent.GetOwner() == player) {
 					ent.Kill();
 				}
@@ -1032,8 +945,9 @@ function OnGameEvent_post_inventory_application(params) {
 			player.Weapon_Switch(meleeWeapon);
 		}
 
+		// todo(jae): 2023-08-06
 		// Enable "Voodoo-Cursed Soul" skin
-		// Source: https://forums.alliedmods.net/showthread.php?t=232434
+		// Source: https://forums.alliedmods.net/attachment.php?attachmentid=175477&d=1557399200
 		// meleeWeapon.AddAttribute("player skin override", 1.0, -1);
 		// meleeWeapon.AddAttribute("zombiezombiezombiezombie", 1.0, -1);
 		// meleeWeapon.AddAttribute("SPELL: Halloween voice modulation", 1.0, -1);
@@ -1057,26 +971,12 @@ function OnGameEvent_post_inventory_application(params) {
 		}
 
 		// todo(jae): 2023-08-06
-		// Disable this for human
+		// Disable Voodoo-Cursed Soul" skin for survivor players
+		// Source: https://forums.alliedmods.net/attachment.php?attachmentid=175477&d=1557399200
 		//player.RemoveAttribute("zombiezombiezombiezombie");
 		//player.RemoveAttribute("SPELL: Halloween voice modulation");
 		break;
 	}
-
-	// Strip wearables
-	//
-	// note(jae): 2023-08-06
-	// For personal reference back when I tried porting Prophunt first
-	// for (local wearable = player.FirstMoveChild(); wearable != null;) {
-	// 	if (wearable.GetClassname() != "tf_wearable") {
-	// 		wearable = wearable.NextMovePeer();
-	// 		continue;
-	// 	}
-	// 	local current_wearable = wearable;
-	// 	wearable = wearable.NextMovePeer();
-
-	// 	current_wearable.Destroy();
-	// }
 }
 
 Init();
