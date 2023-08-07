@@ -1,0 +1,15 @@
+# For format see editorconfig.org
+
+root = true
+
+[*.{nut}]
+indent_size = 4
+indent_style = tab
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{markdown,md}]
+indent_size = 4
+indent_style = space
+# Markdown syntax treats tabs as 4 spaces
+tab_width = 4

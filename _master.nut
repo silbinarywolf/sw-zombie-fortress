@@ -163,11 +163,11 @@ tf_gamerules <- null;
 	// via "tf_spy_cloak_consume_rate".
 	// if(classIndex == Constants.ETFClass.TF_CLASS_SPY &&
 	// 	player.GetSpyCloakMeter() > 80.0) {
-    //     player.SetSpyCloakMeter(80.0);
+	//     player.SetSpyCloakMeter(80.0);
 	// }
 
 	// 1. Handle zombie regeneration.
-    //    Zombies regenerate health based on class and number of nearby
+	//    Zombies regenerate health based on class and number of nearby
  	//    zombies (hoarde bonus). Zombies decay health when overhealed.
 	if (health < maxHealth) {
 		local bonus = 0;
@@ -200,9 +200,9 @@ tf_gamerules <- null;
 			bonus = -3;
 			break;
 		}
-        health += bonus;
-        health = max(health, maxHealth);
-        player.SetHealth(health);
+		health += bonus;
+		health = max(health, maxHealth);
+		player.SetHealth(health);
 	}
 
 	// 2. Handle zombie crit rate bonus.
@@ -236,7 +236,7 @@ tf_gamerules <- null;
 	local isCallingMedicOrBot = player.IsCallingForMedic() || isBot;
 	if (isCallingMedicOrBot) {
 		local health = player.GetHealth();
-    	local maxHealth = NetProps.GetPropInt(player, "m_iMaxHealth");
+		local maxHealth = NetProps.GetPropInt(player, "m_iMaxHealth");
 
 		local rageTimer = 0;
 		if (player in zf_rageTimer) {
@@ -322,7 +322,7 @@ tf_gamerules <- null;
 	HandleSentry();
 
 	// 1 = one second
-    return 1;
+	return 1;
 }
 
 function Init() {
@@ -388,9 +388,9 @@ function Init() {
 	// Convars.SetValue("mp_disable_respawn_times", 0)
 	Convars.SetValue("tf_dropped_weapon_lifetime", 0);
 	Convars.SetValue("mp_stalemate_timelimit", 9999999);
-    Convars.SetValue("mp_scrambleteams_auto_windifference", 0);
+	Convars.SetValue("mp_scrambleteams_auto_windifference", 0);
 	Convars.SetValue("sv_vote_issue_autobalance_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
-    Convars.SetValue("sv_vote_issue_scramble_teams_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
+	Convars.SetValue("sv_vote_issue_scramble_teams_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
 
 	// Bots
 	Convars.SetValue("tf_bot_keep_class_after_death", true);
@@ -427,7 +427,7 @@ function Init() {
 		CollisionGroup = 11,
 		ltime = Time(),
 	});
-    NetProps.SetPropInt(weapon, "m_AttributeManager.m_Item.m_iItemDefinitionIndex", itemID);
+	NetProps.SetPropInt(weapon, "m_AttributeManager.m_Item.m_iItemDefinitionIndex", itemID);
 	NetProps.SetPropInt(weapon, "m_AttributeManager.m_Item.m_iEntityLevel", 0);
 	NetProps.SetPropBool(weapon, "m_AttributeManager.m_Item.m_bInitialized", true);
 	NetProps.SetPropBool(weapon, "m_bClientSideAnimation", true);
@@ -444,11 +444,11 @@ function Init() {
 
 	solidFlags = NetProps.GetPropInt(weapon, "m_Collision.m_usSolidFlags");
 	NetProps.SetPropInt(weapon, "m_Collision.m_usSolidFlags", solidFlags & ~(Constants.FSolid.FSOLID_TRIGGER));
-    Entities.DispatchSpawn(weapon);
+	Entities.DispatchSpawn(weapon);
 	weapon.ReapplyProvision() // then applies any body attributes back onto the player.
 
 	DoEntFire("!self", "SetParent", "!activator", 0, player, weapon);
-    return weapon;
+	return weapon;
 }
 
 ::IsValidTeam <- function(team) {
@@ -620,7 +620,7 @@ function OnGameEvent_teamplay_round_start(params) {
 		return;
 	}
 	team_round_timer.ValidateScriptScope();
-    AddThinkToEnt(team_round_timer, "TickEverySecond");
+	AddThinkToEnt(team_round_timer, "TickEverySecond");
 
 	// Update game rules
 	//
