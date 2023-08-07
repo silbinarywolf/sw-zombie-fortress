@@ -872,11 +872,6 @@ function OnGameEvent_teamplay_setup_finished(params) {
 			if (player == null) {
 				continue;
 			}
-			local team = player.GetTeam();
-			if (!IsValidTeam(team)) {
-				// ignore other teams
-				return;
-			}
 			switch (team) {
 			case humanTeamNumber:
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "[ZF] Grace period complete. Survivors can no longer change classes.");
@@ -1083,38 +1078,6 @@ function OnGameEvent_post_inventory_application(params) {
 	// 	current_wearable.Destroy();
 	// }
 }
-
-// function OnGameEvent_player_changeclass(params) {
-// 	if (!hasInitialized) {
-// 		return;
-// 	}
-// 	if(!("userid" in params) || params.userid == 0) {
-// 		return;
-// 	}
-// 	local player = GetPlayerFromUserID(params.userid);
-// 	if (player == null || !player.IsValid()) {
-// 		return;
-// 	}
-// 	local team = player.GetTeam();
-// 	if (!IsValidTeam(team)) {
-// 		// ignore other teams
-// 		return;
-// 	}
-// }
-
-// function OnGameEvent_item_pickup(params) {
-// 	if (!hasInitialized) {
-// 		return;
-// 	}
-// 	if(!("userid" in params) || params.userid == 0) {
-// 		return;
-// 	}
-// 	// Disallow weapon pickups
-// 	local ent = null
-// 	ent = GetPlayerFromUserID(params.userid)
-// 	local classname = "weapon_" + params["item"];
-// 	RemovePlayerWeapon(ent, classname);
-// }
 
 Init();
 __CollectGameEventCallbacks(this);
