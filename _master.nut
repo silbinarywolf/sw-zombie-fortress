@@ -335,8 +335,10 @@ function Init() {
 		startswith(mapname, "workshop/zf2_")
 	);
 
-	// debug(jae): Testing ZF
-	// FORCE ON ALWAYS
+	// todo(jae): 2023-08-07
+	// Figure out how to make ZF auto-enable for ZF maps
+	// but allow server hosters to configure / opt-in for certain.
+	// maps. Will likely introduce a config file later to be always on or something.
 	local is_zf_enabled = true;
 
 	if (!is_zf_enabled) {
