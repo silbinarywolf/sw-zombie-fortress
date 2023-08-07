@@ -7,7 +7,7 @@ This VScript mod aims to be a faithful reimplementation of the Zombie Fortress m
 
 *Warning:* These instructions assume you have no other vscripts setup and will override your `mapspawn.nut` file if you made one.
 
-- Download the latest release:
+- Download the [latest release here](https://github.com/silbinarywolf/sw-zombie-fortress/releases).
 
 - For Dedicated servers:
     - Go to your `steamapps\common\Team Fortress 2 Dedicated Server\tf` folder
