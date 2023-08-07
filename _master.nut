@@ -783,6 +783,7 @@ function OnGameEvent_teamplay_setup_finished(params) {
 			if (player == null) {
 				continue;
 			}
+			local team = player.GetTeam();
 			switch (team) {
 			case humanTeamNumber:
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "[ZF] Grace period complete. Survivors can no longer change classes.");
