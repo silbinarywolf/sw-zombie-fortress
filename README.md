@@ -1,5 +1,5 @@
 # Zombie Fortress Classic
-*Version:* Pre-alpha v0.2.0
+*Version:* Pre-alpha v0.3.0
 
 This VScript mod aims to be a faithful reimplementation of the Zombie Fortress mode made originally with [SourceMod](https://forums.alliedmods.net/showthread.php?t=77762) for Team Fortress 2.
 

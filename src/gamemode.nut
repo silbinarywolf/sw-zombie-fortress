@@ -1,7 +1,3 @@
-::SW_ZOMBIE_FORTRESS <- { "Version" : "0.1.0" }
-
-ClearGameEventCallbacks();
-
 // Learning References
 // - Functions: https://developer.valvesoftware.com/wiki/Team_Fortress_2/Scripting/Script_Functions
 // - Constants: https://developer.valvesoftware.com/wiki/Team_Fortress_2/Scripting/Script_Functions/Constants
@@ -18,17 +14,20 @@ ClearGameEventCallbacks();
 // - AddCondEx cheatsheet: https://wiki.teamfortress.com/wiki/Cheats
 //
 // - Test map: changelevel workshop/2926638864
-// - Bots: tf_bot_add 3 heavyweapons blue expert
+// - Bots: tf_bot_add 5 heavyweapons blue expert
 //
 // Debug quicker:
-// - Skip wait time - mp_waitingforplayers_cancel 1
-// - Skip setup time - ent_fire team_round_timer disable
+// - Skip wait/setup time - enable "zf_debugDevMode <- true" and type "!ds" to skip waiting/setup time
 
-ZF_ROUND_WAITING <- 1;
+SW_ZF_VERSION <- "0.3.0"
+
+ZF_ROUND_WAITING  <- 1;
 ZF_ROUND_IN_SETUP <- 2;
-ZF_ROUND_STARTED <- 3;
+ZF_ROUND_STARTED  <- 3;
 
-hasInitialized <- false;
+ZF_SPAWNSTATE_REST   <- 0;
+ZF_SPAWNSTATE_HUNGER <- 1;
+ZF_SPAWNSTATE_FRENZY <- 2;
 
 is_zf_map <- false;
 
@@ -36,24 +35,49 @@ humanTeamNumber <- Constants.ETFTeam.TF_TEAM_RED;
 
 zombieTeamNumber <- Constants.ETFTeam.TF_TEAM_BLUE;
 
-// Percentage of players that start as survivors, must have at least 1 survivor
-survivorPlayerPercent <- 0.65;
-
 // We need to track round state for reasons mentioned below in comments, for example:
 // - Tracking if we're still in the waiting period
 // - Knowing if the game is no longer in setup when handling death events
 zf_roundState <- ZF_ROUND_WAITING;
 zf_roundStateFiredFirstRoundStart <- false;
 
-// player_actual_team maps a player ID to their start team
+zf_spawnZombiesKilledCounter <- 0;
+
+zf_spawnSurvivorsKilledCounter <- 1;
+
+zf_spawnRestCounter <- 0;
+
+// zf_spawnState is the state zombies are in and it affects whether they take short, medium
+// or long times to spawn
+zf_spawnState <- ZF_SPAWNSTATE_HUNGER;
+
+// zf_playerActualTeam maps a player ID to their start team
 //
-// This is used to stop players changing their teams during setup, mostly
-// motivation to stop bots doing it
-player_actual_team <- {};
+// This is used to stop players changing their teams.
+zf_playerActualTeam <- {};
+
+// zf_playerPrimaryWeaponMaxAmmo tracks players max ammo for their primary weapon
+// ie. Bullets in clip that you use to reload
+zf_playerPrimaryWeaponMaxAmmo <- {};
+
+// zf_hordeBonus maps a zombie player to a number used for buffing zombies.
+//
+// Horde bonus is equal to the number of zombies grouped up together excluding yourself.
+// ie. If you're with 2 other zombies, your horde bonus is 2.
+zf_hordeBonus <- {}
+
+// zf_critBonus is a bonus for both zombie and survivor players.
+//
+// Survivors get a bonus for each zombie kill they get.
+// Zombies get a bonus for sticking close to other zombies.
+zf_critBonus <- {};
 
 // zf_rageTimer maps to a player ID, if its above zero, the player cannot use "Call for medic"
 // to get a health boost
 zf_rageTimer <- {};
+
+// zf_rageHasUsedOnce tracks if a user has used rage
+zf_rageHasUsedOnce <- {};
 
 // zf_standardMapCapTimeScale will multiply the time it takes to capture a point time by N.
 // So if it takes 6 seconds to capture, and you set this to 2, it'll take 12 seconds to capture.
@@ -77,6 +101,19 @@ zf_debugDevMode <- false;
 
 // tf_gamerules holds the tf_gamerules game objects after the round starts
 tf_gamerules <- null;
+
+::SW_WelcomeMessage <- function() {
+	local player = self;
+	if (player == null || !player.IsValid()) {
+		return;
+	}
+	ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Welcome to Zombie Fortress Classic!");
+	ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Welcome to Zombie Fortress Classic! Version " + SW_ZF_VERSION);
+	ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Type !help to get more information");
+	if (zf_debugDevMode) {
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF DEBUG MODE ENABLED]");
+	}
+}
 
 ::IsZombieClass <- function(classIndex) {
 	return (
@@ -151,17 +188,11 @@ tf_gamerules <- null;
 	if (time != 0) {
 		time = time / 2.0;
 	}
-	// note(jae): 2023-08-06
-	// Unable to get this to work... I think. Hard to test if this works or not.
 	if (zombieTeamNumber == Constants.ETFTeam.TF_TEAM_BLUE) {
-		// NetProps.SetPropFloat(tf_gamerules, "SetBlueTeamRespawnWaveTime", time);
 		EntFireByHandle(tf_gamerules, "SetBlueTeamRespawnWaveTime", time.tostring(), 0.0, null, null);
 	} else {
-		// NetProps.SetPropFloat(tf_gamerules, "SetRedTeamRespawnWaveTime", time);
 		EntFireByHandle(tf_gamerules, "SetRedTeamRespawnWaveTime", time.tostring(), 0.0, null, null);
 	}
-	// DEBUG
-	// printl("-- Updated Zombie spawn time (logic doesnt seem to work yet for some reason? or suicide affects timers...)")
 }
 
 ::HandleHumanOnTick <- function(player) {
@@ -170,6 +201,10 @@ tf_gamerules <- null;
 	local min = @(a, b) a < b ? a : b;
 	local max = @(a, b) a > b ? a : b;
 
+	// 1. Handle survivor weapon rules.
+	//    SMG doesn't have to reload.
+	//    Syringe gun / blutsauger don't have to reload.
+	//    Flamethrower / backburner ammo limited to 125.
 	switch (classIndex) {
 	case Constants.ETFClass.TF_CLASS_SNIPER:
 		// ZF Rule: SMG doesn't have to reload
@@ -183,8 +218,9 @@ tf_gamerules <- null;
 		// Weapon definition indexes
 		// 16  = SMG
 		// 203 = SMG (Renamed/Strange)
+		// 751 = The Cleaner's Carbine
 		local weaponDefID = NetProps.GetPropInt(weapon, "m_AttributeManager.m_Item.m_iItemDefinitionIndex");
-		if (weaponDefID == 16 || weaponDefID == 203) {
+		if (weaponDefID == 16 || weaponDefID == 203 || weaponDefID == 751) {
 			// todo(jae): 2023-08-06
 			// Confirm it only affects SMG
 			local ammoType = weapon.GetPrimaryAmmoType();
@@ -212,8 +248,9 @@ tf_gamerules <- null;
 		// 17  = Syringe Gun
 		// 204 = Syringe Gun (Renamed/Strange)
 		// 36  = The Blutsauger
+		// 412 = The Overdose
 		local weaponDefID = NetProps.GetPropInt(weapon, "m_AttributeManager.m_Item.m_iItemDefinitionIndex");
-		if (weaponDefID == 17 || weaponDefID == 204 || weaponDefID == 36) {
+		if (weaponDefID == 17 || weaponDefID == 204 || weaponDefID == 36 || weaponDefID == 412) {
 			local ammoType = weapon.GetPrimaryAmmoType();
 			local reloadClipAmmo = weapon.Clip1();
 			local ammoCount = NetProps.GetPropIntArray(player, "m_iAmmo", ammoType);
@@ -227,17 +264,30 @@ tf_gamerules <- null;
 		}
 		break;
 	case Constants.ETFClass.TF_CLASS_PYRO:
-		// ZF Rule: Flamethrower / backburner ammo limited to 125.
+		// ZF Rule: Flamethrower / backburner ammo limited to 100.
 		local weapon = NetProps.GetPropEntityArray(player, "m_hMyWeapons", 0);
 		if (weapon == null) {
 			break;
 		}
 		local ammoType = weapon.GetPrimaryAmmoType();
 		local ammoCount = NetProps.GetPropIntArray(player, "m_iAmmo", ammoType);
-		if (ammoCount > 125) {
-			NetProps.SetPropIntArray(player, "m_iAmmo", 125, ammoType);
+		if (ammoCount > 100) {
+			NetProps.SetPropIntArray(player, "m_iAmmo", 100, ammoType);
 		}
 		break;
+	}
+
+	// 2. Handle survivor crit bonus rules.
+    //    Decrement morale bonus by -3 per second (main timer).
+	if (player in zf_critBonus) {
+		local critBonus = zf_critBonus[player];
+		if (critBonus > 0) {
+			critBonus -= 3;
+			if (critBonus < 0) {
+				critBonus = 0;
+			}
+			zf_critBonus[player] = critBonus;
+		}
 	}
 }
 
@@ -261,18 +311,24 @@ tf_gamerules <- null;
 
 	// 1. Handle zombie regeneration.
 	//    Zombies regenerate health based on class and number of nearby
-	 //    zombies (hoarde bonus). Zombies decay health when overhealed.
+	//    zombies (horde bonus). Zombies decay health when overhealed.
 	if (health < maxHealth) {
+		// Get horde bonus (if any)
+		local hordeBonus = 0;
+		if (player in zf_hordeBonus) {
+			hordeBonus = zf_hordeBonus[player];
+		}
+		// Compute health bonus
 		local bonus = 0;
 		switch (classIndex) {
 		case Constants.ETFClass.TF_CLASS_SCOUT:
-			bonus = 2; // + (1 * zf_hoardeBonus[i]);
+			bonus = 2 + (1 * hordeBonus);
 			break;
 		case Constants.ETFClass.TF_CLASS_HEAVYWEAPONS:
-			bonus = 4; // + (3 * zf_hoardeBonus[i]);
+			bonus = 4 + (3 * hordeBonus);
 			break;
 		case Constants.ETFClass.TF_CLASS_SPY:
-			bonus = 2; // + (1 * zf_hoardeBonus[i]);
+			bonus = 2 + (1 * hordeBonus);
 			break;
 		}
 		health += bonus;
@@ -300,24 +356,38 @@ tf_gamerules <- null;
 
 	// 2. Handle zombie crit rate bonus.
 	//    Zombies receive crit bonus based on number of nearby zombies
-	//    (hoarde bonus). Zombies only receive this bonus at full health
+	//    (horde bonus). Zombies only receive this bonus at full health
 	//    or greater.
-	// bonus = 0;
-	// if(health >= maxHealth) {
-	// 	switch(clientClass) {
-	// 		case TFClass_Scout: bonus = 5 + (1 * zf_hoardeBonus[i]);
-	// 		case TFClass_Heavy: bonus = 10 + (5 * zf_hoardeBonus[i]);
-	// 		case TFClass_Spy:   bonus = 5 + (1 * zf_hoardeBonus[i]);
-	// 	}
-	// }
-	// zf_critBonus[i] = bonus;
+	if(health >= maxHealth) {
+		// Get crit bonus (if any)
+		local hordeBonus = 0;
+		if (player in zf_hordeBonus) {
+			hordeBonus = zf_hordeBonus[player];
+		}
+		local bonus = 0;
+		switch (classIndex) {
+		case Constants.ETFClass.TF_CLASS_SCOUT:
+			bonus = 5 + (1 * hordeBonus);
+			break;
+		case Constants.ETFClass.TF_CLASS_HEAVYWEAPONS:
+			bonus = 10 + (5 * hordeBonus);
+			break;
+		case Constants.ETFClass.TF_CLASS_SPY:
+			bonus = 5 + (1 * hordeBonus);
+			break;
+		}
+		zf_critBonus[player] <- bonus;
+	} else {
+		// If not at full health, don't get crit bonus
+		zf_critBonus[player] <- 0;
+	}
 
 	// 3. Handle zombie rage timer
 	//    Rage recharges every 30s.
 	if (player in zf_rageTimer && zf_rageTimer[player] > 0) {
 		zf_rageTimer[player]--;
 		if (zf_rageTimer[player] == 0) {
-			ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Rage is ready! (Call for medic for health boost)");
+			ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Rage is ready! (Call for medic for health and speed boost)");
 		}
 	}
 	if (player in zf_rageCantUseMessageTimer && zf_rageCantUseMessageTimer[player] > 0) {
@@ -341,14 +411,17 @@ tf_gamerules <- null;
 
 		if (rageTimer == 0) {
 			if (health >= maxHealth) {
+				zf_rageHasUsedOnce[player] <- true;
 				zf_rageTimer[player] <- 30; // set 30 seconds till rage resets
 				zf_rageCantUseMessageTimer[player] <- 5;
+				// boosts speed for 5 seconds (from zombiefortres_redux.sp, this wasn't in vanilla)
+				player.AddCondEx(Constants.ETFCond.TF_COND_SPEED_BOOST, 5.0, player);
 				player.SetHealth(maxHealth * 1.5);
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Rage activated!");
 			} else {
 				// Avoid showing same message per tick
 				if (!isBot && (!(player in zf_rageCantUseMessageTimer) || zf_rageCantUseMessageTimer[player] == 0)) {
-					ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Cannot activate rage, must be at least full health");
+					ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Cannot activate rage, must be full health or overhealed");
 					zf_rageCantUseMessageTimer[player] <- 5;
 				}
 			}
@@ -359,6 +432,73 @@ tf_gamerules <- null;
 				zf_rageCantUseMessageTimer[player] <- 5;
 			}
 		}
+	}
+}
+
+::GetZombieTeamCount <- function() {
+	local zombieCount = 0;
+	for (local i = 1; i <= Constants.Server.MAX_PLAYERS; i++) {
+		local player = PlayerInstanceFromIndex(i)
+		if (player == null || !player.IsValid()) {
+			continue;
+		}
+		local team = player.GetTeam();
+		if (team == zombieTeamNumber) {
+			zombieCount++;
+		}
+	}
+	return zombieCount;
+}
+
+::HandleZombieSpawnTime <- function() {
+	// Only handle zombie state after round started
+	if (zf_roundState != ZF_ROUND_STARTED) {
+		return;
+	}
+
+	// 1. Handle zombie spawn times. Zombie spawn times can have one of three
+	//    states: Rest (long spawn times), Hunger (medium spawn times), and
+	//    Frenzy (short spawn times).
+	switch(zf_spawnState) {
+	case ZF_SPAWNSTATE_REST: {
+		// 1a. Rest state (long spawn times). Transition to Hunger
+		//     state after rest timer reaches zero.
+		zf_spawnRestCounter--;
+		if (zf_spawnRestCounter <= 0) {
+			zf_spawnState = ZF_SPAWNSTATE_HUNGER;
+			zf_spawnSurvivorsKilledCounter = 1;
+			ClientPrint(null, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF SPAWN]\x01 Zombies Hunger...");
+			SetZombieSpawnTime(8.0);
+		}
+		break;
+	}
+	case ZF_SPAWNSTATE_HUNGER: {
+		// 1b. Hunger state (medium spawn times). Transition to Frenzy
+		//     state after one survivor is killed.
+		if (zf_spawnSurvivorsKilledCounter <= 0) {
+			local zombieTeamCount = GetZombieTeamCount();
+			zf_spawnState = ZF_SPAWNSTATE_FRENZY;
+			zf_spawnZombiesKilledCounter = (2 * zombieTeamCount);
+			ClientPrint(null, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF SPAWN]\x01 Zombies are Frenzied!");
+			SetZombieSpawnTime(0.0);
+		}
+		break;
+	}
+    case ZF_SPAWNSTATE_FRENZY: {
+		// 1c. Frenzy state (short spawn times). Transition to Rest
+    	//     state after a given number of zombies are killed.
+		if (zf_spawnZombiesKilledCounter <= 0) {
+			local zombieTeamCount = GetZombieTeamCount();
+			zf_spawnState = ZF_SPAWNSTATE_REST;
+			zf_spawnRestCounter = (3 * zombieTeamCount);
+			if (zf_spawnRestCounter < 45) {
+				zf_spawnRestCounter = 45;
+			}
+			ClientPrint(null, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Zombies are Resting...");
+			SetZombieSpawnTime(16.0);
+		}
+		break;
+    }
 	}
 }
 
@@ -403,52 +543,104 @@ tf_gamerules <- null;
 	}
 }
 
-::ChangeToActualTeam <- function() {
-	local player = self;
-	if (player == null || !player.IsValid()) {
-		return;
-	}
-	local team = player.GetTeam();
-	if (!IsValidTeam(team)) {
-		return;
-	}
-	local actual_team = team;
-	if (player in player_actual_team) {
-		actual_team = player_actual_team[player];
-	}
-	player.ForceChangeTeam(actual_team, false);
-
-	// If players team is zombie, re-check player count and see if zombies win
-	if (actual_team != zombieTeamNumber) {
-		return;
-	}
-	local humanCount = 0;
+::HandleZombieHordeBonus <- function() {
+	// 1. Find all active zombie players.
+	local zombieList = [];
 	for (local i = 1; i <= Constants.Server.MAX_PLAYERS; i++) {
 		local player = PlayerInstanceFromIndex(i)
-		if (player == null || !(player in player_actual_team)) {
+		if (player == null || !player.IsValid()) {
 			continue;
 		}
-		local team = player_actual_team[player];
+		local team = player.GetTeam();
 		switch (team) {
-		case humanTeamNumber:
-			humanCount++;
+		case zombieTeamNumber:
+			zombieList.push(player);
 			break;
 		}
 	}
-	if (humanCount == 0) {
-		local game_round_win = SpawnEntityFromTable("game_round_win", {
-			TeamNum=zombieTeamNumber,
-			force_map_reset=true,
-			switch_teams=false
-		})
-		EntFireByHandle( game_round_win, "RoundWin", "", 0, null, null );
+	if (zombieList.len() == 0) {
+		return;
+	}
+
+	local hordeStack = [];
+	local playerHordeIndex = {};
+	local hordeSizeList = [];
+	for (local i = 0; i < zombieList.len(); i++) {
+		// 2a. Create new horde group.
+		// If player is not in horde, create one and add them to it
+		{
+			local player = zombieList[i];
+			if (!(player in playerHordeIndex)) {
+				hordeSizeList.push(1);
+				playerHordeIndex[player] <- hordeSizeList.len()-1;
+				hordeStack.push(player);
+			}
+		}
+
+		// 2b. Build current horde created in step 2a.
+   	 	//     Use a depth-first adjacency search.
+		while (hordeStack.len() > 0) {
+			local player = hordeStack.pop();
+			for(local j = i+1; j < zombieList.len(); j++) {
+				local otherPlayer = zombieList[j];
+				if (otherPlayer in playerHordeIndex) {
+					// If player is already assigned to a hoard, do nothing
+					continue;
+				}
+				local deltaVector = player.GetOrigin() - otherPlayer.GetOrigin(); // GetOrigin == GetAbsOrigin
+				local distance = deltaVector.Norm();
+				// DEBUG: Check if distance calculations work
+				// printl("Distance - " + distance);
+				if (distance <= 1000) {
+					// Add match to our horde
+					local currHordeIndex = hordeSizeList.len()-1;
+					playerHordeIndex[otherPlayer] <- currHordeIndex;
+					hordeSizeList[currHordeIndex] += 1;
+
+					// Next, let's see who *they* match with on the same horde
+					hordeStack.push(otherPlayer);
+				}
+			}
+		}
+	}
+
+	// DEBUG: Check if hording works as expected
+	//for (local i = 0; i < hordeSizeList.len(); i++) {
+	//	printl("Horde["+i+"]:" + hordeSizeList[i]);
+	//}
+
+	// 3. Set horde bonuses.
+	for (local i = 0; i < zombieList.len(); i++) {
+		local player = zombieList[i];
+		if (player in playerHordeIndex) {
+			// If part of horde, apply bonus
+			local hordeIndex = playerHordeIndex[player];
+			local zombieCountInHorde = hordeSizeList[hordeIndex];
+			zf_hordeBonus[player] <- zombieCountInHorde - 1;
+		} else {
+			// If not part of horde, remove bonus
+			zf_hordeBonus[player] <- 0;
+		}
 	}
 }
 
-// runs on team_round_timer entity
+tickFiveSecondCounter <- 0;
+
+// runs on team_round_timer entity (1Hz)
 //
 // equivalent to timer_main from zombiefortress_vanilla
 ::TickEverySecond <- function() {
+	// Run Horde bonus logic every 5 seconds
+	//
+	// This is equivalent to timer_horde from zombiefortress_vanilla
+	tickFiveSecondCounter++;
+	if (tickFiveSecondCounter >= 5) {
+		// Handle zombie horde bonuses
+		HandleZombieHordeBonus();
+
+		tickFiveSecondCounter = 0;
+	}
+
 	for (local i = 1; i <= Constants.Server.MAX_PLAYERS; i++) {
 		local player = PlayerInstanceFromIndex(i)
 		if (player == null || !player.IsValid()) {
@@ -465,10 +657,56 @@ tf_gamerules <- null;
 		}
 	}
 
+	// Handle each engineer sentry
 	HandleSentry();
+
+	// Update zombie spawn time based on their state
+	HandleZombieSpawnTime();
 
 	// 1 = one second
 	return 1;
+}
+
+::ChangeToActualTeam <- function() {
+	local player = self;
+	if (player == null || !player.IsValid()) {
+		return;
+	}
+	local team = player.GetTeam();
+	if (!IsValidTeam(team)) {
+		return;
+	}
+	local actual_team = team;
+	if (player in zf_playerActualTeam) {
+		actual_team = zf_playerActualTeam[player];
+	}
+	player.ForceChangeTeam(actual_team, false);
+
+	// If players team is zombie, re-check player count and see if zombies win
+	if (actual_team != zombieTeamNumber) {
+		return;
+	}
+	local humanCount = 0;
+	for (local i = 1; i <= Constants.Server.MAX_PLAYERS; i++) {
+		local player = PlayerInstanceFromIndex(i)
+		if (player == null || !(player in zf_playerActualTeam)) {
+			continue;
+		}
+		local team = zf_playerActualTeam[player];
+		switch (team) {
+		case humanTeamNumber:
+			humanCount++;
+			break;
+		}
+	}
+	if (humanCount == 0) {
+		local game_round_win = SpawnEntityFromTable("game_round_win", {
+			TeamNum=zombieTeamNumber,
+			force_map_reset=true,
+			switch_teams=false
+		})
+		EntFireByHandle(game_round_win, "RoundWin", "", 0, null, null);
+	}
 }
 
 ::IsVoodooWearable <- function(wearable) {
@@ -576,6 +814,25 @@ tf_gamerules <- null;
 // 	player.AddCustomAttribute("SPELL: Halloween voice modulation", 1.0, -1);
 // }
 
+::AddPrimaryWeaponAmmo <- function(player, amount) {
+	local weapon = NetProps.GetPropEntityArray(player, "m_hMyWeapons", 0);
+	if (weapon == null) {
+		return;
+	}
+	if (!(player in zf_playerPrimaryWeaponMaxAmmo)) {
+		printl("[ZF_WARNING] unable to read players primary weapon max ammo for adding ammo");
+		return;
+	}
+	local maxAmmo = zf_playerPrimaryWeaponMaxAmmo[player];
+	local ammoType = weapon.GetPrimaryAmmoType();
+	local ammo = NetProps.GetPropIntArray(player, "m_iAmmo", ammoType);
+	ammo += amount;
+	if (ammo > maxAmmo) {
+		ammo = maxAmmo;
+	}
+	NetProps.SetPropIntArray(player, "m_iAmmo", ammo, ammoType);
+}
+
 ::KillSapperWeapon <- function() {
 	local player = self;
 	if (player == null || !player.IsValid()) {
@@ -595,117 +852,6 @@ tf_gamerules <- null;
 			weapon.Kill();
 		}
 	}
-}
-
-function SW_ZF_Init(file_scope_this) {
-	if (hasInitialized) {
-		return;
-	}
-	local mapname = GetMapName();
-
-	is_zf_map = (
-		startswith(mapname, "zf_") ||
-		startswith(mapname, "workshop/zf_") ||
-		startswith(mapname, "zf2_") ||
-		startswith(mapname, "workshop/zf2_")
-	);
-
-	// todo(jae): 2023-08-07
-	// Figure out how to make ZF auto-enable for ZF maps
-	// but allow server hosters to configure / opt-in for certain.
-	// maps. Will likely introduce a config file later to be always on or something.
-	local is_zf_enabled = true;
-
-	if (!is_zf_enabled) {
-		return;
-	}
-
-	// DEBUG
-	// printl("-- Init ZF");
-
-	// In control point, blue is attacking, so swap the teams
-	local is_control_point_map = (
-		startswith(mapname, "cp_") ||
-		startswith(mapname, "workshop/cp_")
-	);
-	if (is_control_point_map) {
-		// Check that defending control points are for RED team, if they are
-		// then swap the zombie teams
-		local should_swap_teams = true;
-		for (local ent = null; ent = Entities.FindByClassname(ent, "team_control_point");) {
-			local team = NetProps.GetPropInt(ent, "m_iTeamNum");
-			control_point_count++;
-			if (team != Constants.ETFTeam.TF_TEAM_RED) {
-				// Don't swap teams if control point is owned by blue
-				should_swap_teams = false;
-				break;
-			}
-		}
-		if (should_swap_teams) {
-			humanTeamNumber = Constants.ETFTeam.TF_TEAM_BLUE;
-			zombieTeamNumber = Constants.ETFTeam.TF_TEAM_RED;
-		}
-	}
-
-	local is_payload_map = (
-		startswith(mapname, "pl_") ||
-		startswith(mapname, "workshop/pl_")
-	);
-	if (is_payload_map) {
-		// Swap teams for payload
-		humanTeamNumber = Constants.ETFTeam.TF_TEAM_BLUE;
-		zombieTeamNumber = Constants.ETFTeam.TF_TEAM_RED;
-	}
-
-	// note(jae): 2023-08-05
-	// Doesn't work, but I tried.
-	// local tags = Convars.GetStr("sv_tags");
-	// if (tags != null) {
-	// 	Convars.SetValue("sv_tags", tags+",zf");
-	// }
-
-	// Game settings
-	Convars.SetValue("tf_forced_holiday", 2); // force halloween mode, this also makes "Voodoo-Cursed_Soul" work
-	Convars.SetValue("mp_scrambleteams_auto", 0);
-	Convars.SetValue("tf_classlimit", 0);
-	Convars.SetValue("mp_autoteambalance", 0);
-	Convars.SetValue("mp_teams_unbalance_limit", 0);
-	// Convars.SetValue("mp_disable_respawn_times", 0)
-	Convars.SetValue("tf_dropped_weapon_lifetime", 0);
-	Convars.SetValue("mp_stalemate_timelimit", 9999999);
-	Convars.SetValue("mp_scrambleteams_auto_windifference", 0);
-	Convars.SetValue("sv_vote_issue_autobalance_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
-	Convars.SetValue("sv_vote_issue_scramble_teams_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
-
-	// Bots
-	Convars.SetValue("tf_bot_keep_class_after_death", true);
-	Convars.SetValue("tf_bot_reevaluate_class_in_spawnroom", 0);
-
-	// Engineer
-	Convars.SetValue("tf_obj_upgrade_per_hit", 0); // Locked
-	Convars.SetValue("tf_sentrygun_metal_per_shell", 201); // Locked
-
-	// Medic
-	Convars.SetValue("weapon_medigun_charge_rate", 30); // Locked, Default 40
-	Convars.SetValue("weapon_medigun_chargerelease_rate", 6); // Locked, Default 8
-	Convars.SetValue("tf_max_health_boost", 1.25); // Locked, Default 1.5
-	Convars.SetValue("tf_boost_drain_time", 3600); // Locked, Default 15.0, Time it takes for a health boost to degrade.
-
-	// Spy
-	Convars.SetValue("tf_spy_invis_time", 0.5);
-	Convars.SetValue("tf_spy_invis_unstealth_time", 0.75);
-	Convars.SetValue("tf_spy_cloak_no_attack_time", 1.0);
-
-	// Effectively makes cloak 20% smaller.
-	Convars.SetValue("tf_spy_cloak_consume_rate", 12.5); // Default: 10, consumes 10 per second out of 100.
-
-	// DEBUG: Swap teams (I used this to quickly test engineer logic)
-	// local oldHumanTeam = humanTeamNumber;
-	// humanTeamNumber <- zombieTeamNumber;
-	// zombieTeamNumber <- oldHumanTeam;
-
-	hasInitialized = true;
-	__CollectGameEventCallbacks(file_scope_this);
 }
 
 ::GivePlayerWeapon <- function(player, className, itemID) {
@@ -810,18 +956,53 @@ function SW_ZF_Init(file_scope_this) {
 	}
 }
 
-function OnGameEvent_teamplay_round_start(params) {
-	if (!hasInitialized) {
+function OnScriptHook_OnTakeDamage(params)
+{
+	// Ignore if this isn't a player-on-player attack
+	if (!params.const_entity.IsPlayer() ||
+		params.inflictor == null ||
+		!params.inflictor.IsPlayer()) {
 		return;
 	}
+	local player = params.inflictor;
+	local critBonus = 0;
+	if (player in zf_critBonus) {
+		critBonus = zf_critBonus[player];
+	}
+	// Handle crit bonuses.
+  	// + Survivors: Crit result is combination of bonus and standard crit calulations.
+  	// + Zombies:   Crit result is based solely on bonus calculation.
+	local team = player.GetTeam();
+	switch (team) {
+	case humanTeamNumber: {
+		// humans get crits as normal and have a chance of additional crits
+		if (critBonus > RandomInt(0,99)) {
+			// Make their damage a full crit
+			params.crit_type = 2;
+		}
+		break;
+	}
+	case zombieTeamNumber: {
+		// disable crit, zombies only crit from crit bonuses
+		params.crit_type = 0;
+		if (critBonus > RandomInt(0,99)) {
+			// Make their damage a full crit
+			params.crit_type = 2;
+		}
+		break;
+	}
+	}
+}
 
-	// Setup zombie spawn time
-	SetZombieSpawnTime(8.0);
+function OnGameEvent_teamplay_round_start(params) {
+	if (!zf_hasInitialized) {
+		return;
+	}
 
 	// Add our "::TickEverySecond" function to team_round_timer
 	local team_round_timer = Entities.FindByClassname(null, "team_round_timer");
 	if (team_round_timer == null) {
-		printl("WARNING: Team round timer not found. Zombie regen and survivor behaviour won't work properly");
+		printl("[ZF_WARNING] Team round timer not found. Zombie regen and survivor behaviour won't work properly");
 		return;
 	}
 	team_round_timer.ValidateScriptScope();
@@ -865,6 +1046,9 @@ function OnGameEvent_teamplay_round_start(params) {
 	// If not full reset, don't reset any of the game such as teams
 	// ie. If on cp_dustbowl you've moved on to the second or third round
 	if (!params.full_reset) {
+		// note(jae): 2023-08-13
+		// zf_roundState  == ZF_ROUND_WAITING can only be true if
+		// "OnGameEvent_teamplay_setup_finished" didn't fire
 		if (zf_roundState == ZF_ROUND_WAITING ||
 			zf_roundState == ZF_ROUND_STARTED) {
 			zf_roundState = ZF_ROUND_IN_SETUP;
@@ -881,10 +1065,18 @@ function OnGameEvent_teamplay_round_start(params) {
 	}
 
 	// reset globals
-	player_actual_team = {};
+	zf_playerActualTeam = {};
 	zf_rageTimer = {};
 	zf_rageCantUseMessageTimer = {};
 	zf_roundState = ZF_ROUND_IN_SETUP;
+	zf_hordeBonus = {};
+	zf_critBonus = {};
+
+	// Handle zombie spawn state.
+	zf_spawnState = ZF_SPAWNSTATE_HUNGER;
+	zf_spawnSurvivorsKilledCounter = 1;
+	zf_spawnRestCounter = 0;
+	SetZombieSpawnTime(8.0);
 
 	// update
 	//
@@ -938,22 +1130,22 @@ function OnGameEvent_teamplay_round_start(params) {
 	}
 	local playerCount = playerList.len();
 	if (playerCount > 0) {
-		local expectedHumanCount = floor(playerCount*survivorPlayerPercent);
+		local expectedHumanCount = floor(playerCount*zf_config.survivor_team_ratio);
 		if (expectedHumanCount <= 0) {
 			expectedHumanCount = 1;
 		}
 		ShuffleArray(playerList);
 		for (local i = 0; i < expectedHumanCount; i++) {
 			local player = playerList[i];
-			player_actual_team[player] <- humanTeamNumber;
+			zf_playerActualTeam[player] <- humanTeamNumber;
 		}
 		for (local i = expectedHumanCount; i < playerCount; i++) {
 			local player = playerList[i];
-			player_actual_team[player] <- zombieTeamNumber;
+			zf_playerActualTeam[player] <- zombieTeamNumber;
 		}
 
 		// DEBUG: Force TEAM for human (non-bot) players
-		// local forcedTeamNumber = humanTeamNumber;
+		// local forcedTeamNumber = zombieTeamNumber;
 		// for (local i = 1; i <= Constants.Server.MAX_PLAYERS; i++) {
 		// 	local player = PlayerInstanceFromIndex(i)
 		// 	if (player == null) {
@@ -965,7 +1157,7 @@ function OnGameEvent_teamplay_round_start(params) {
 		// 		continue;
 		// 	}
 		// 	if (!IsPlayerABot(player)) {
-		// 		player_actual_team[player] <- forcedTeamNumber;
+		// 		zf_playerActualTeam[player] <- forcedTeamNumber;
 		// 	}
 		// }
 
@@ -978,12 +1170,12 @@ function OnGameEvent_teamplay_round_start(params) {
 			if (player == null || !player.IsValid()) {
 				continue;
 			}
-			if (!(player in player_actual_team)) {
+			if (!(player in zf_playerActualTeam)) {
 				// Should not be possible, but skip incase.
-				printl("WARNING: unexpected case occurred. couldn't find team for player")
+				printl("[ZF_WARNING] unexpected case occurred. couldn't find team for player")
 				continue;
 			}
-			local team = player_actual_team[player];
+			local team = zf_playerActualTeam[player];
 			// Swap to team
 			if (player.GetTeam() != team) {
 				player.ForceChangeTeam(team, false);
@@ -1014,7 +1206,7 @@ function OnGameEvent_teamplay_round_start(params) {
 }
 
 function OnGameEvent_player_builtobject(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	// note(jae): 2023-08-06
@@ -1046,7 +1238,7 @@ function OnGameEvent_player_builtobject(params) {
 }
 
 function OnGameEvent_player_death(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	if(!("userid" in params) || params.userid == 0) {
@@ -1063,10 +1255,10 @@ function OnGameEvent_player_death(params) {
 	}
 
 	// If player team doesn't match actual team, force them back
-	if (player in player_actual_team && team != player_actual_team[player]) {
+	if (player in zf_playerActualTeam && team != zf_playerActualTeam[player]) {
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Cannot change your team!");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Cannot change your team!");
-		player.ForceChangeTeam(player_actual_team[player], false);
+		player.ForceChangeTeam(zf_playerActualTeam[player], false);
 		return;
 	}
 
@@ -1091,12 +1283,27 @@ function OnGameEvent_player_death(params) {
 		// Force to zombie team
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "You've been zombified!");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 You've been zombified!");
-		player_actual_team[player] <- zombieTeamNumber;
+		zf_playerActualTeam[player] <- zombieTeamNumber;
 
 		// note(jae): 2023-08-11
 		// Delay this so when you get turned into a zombie your corpse doesn't immediately
 		// become the other teams color.
 		EntFireByHandle(player, "RunScriptCode", "ChangeToActualTeam()", 0.0, null, null);
+
+		// Give zombie perks for killing a survivor
+		local killers = [];
+		local attacker = GetPlayerFromUserID(params.attacker);
+		local assister = GetPlayerFromUserID(params.assister);
+		if (attacker != null && attacker.IsValid() && attacker.GetTeam() != humanTeamNumber) {
+			killers.push(attacker);
+		}
+		if (assister != null && assister.IsValid() && assister.GetTeam() != humanTeamNumber) {
+			killers.push(assister);
+		}
+		if (killers.len() > 0) {
+			// If zombies hunger and have killed a survivor, they'll get faster spawn times
+			zf_spawnSurvivorsKilledCounter -= 1;
+		}
 		break;
 	case zombieTeamNumber:
 		// Remove dropped ammopacks from zombies.
@@ -1104,6 +1311,97 @@ function OnGameEvent_player_death(params) {
 			if (ent.GetOwner() == player) {
 				ent.Kill();
 			}
+		}
+
+		// Don't process kill info
+		if (zf_roundState != ZF_ROUND_STARTED) {
+			break;
+		}
+
+		// Give survivors perks for killing a zombie
+		local killers = [];
+		local attacker = GetPlayerFromUserID(params.attacker);
+  		local assister = GetPlayerFromUserID(params.assister);
+		if (attacker != null && attacker.IsValid() && attacker.GetTeam() != zombieTeamNumber) {
+			killers.push(attacker);
+		}
+		if (assister != null && assister.IsValid() && assister.GetTeam() != zombieTeamNumber) {
+			killers.push(assister);
+		}
+
+		if (killers.len() > 0) {
+			// If zombie was killed by attackers on other team
+			//
+			// We lower this number if zombies are frenzied, if it hits 0, then zombies
+			// get longer spawn times again.
+			zf_spawnZombiesKilledCounter -= 1;
+
+			// If killers by players on the other team and haven't used rage
+			// let the player know they can use it.
+			if (!(player in zf_rageHasUsedOnce)) {
+				ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Use your zombie rage ability by calling for medic with full health!");
+				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Use your zombie rage ability by calling for medic (default: E) with full health. This buffs your health and speed temporarily!");
+			}
+		}
+
+		for (local i = 0; i < killers.len(); i++) {
+			// variable shadowing is allowed in VScript
+			local player = killers[i];
+			switch (player.GetPlayerClass()) {
+			case Constants.ETFClass.TF_CLASS_SOLDIER: {
+				// Add +2 rockets for kill
+				AddPrimaryWeaponAmmo(player, 2);
+				break;
+			}
+			case Constants.ETFClass.TF_CLASS_DEMOMAN:
+				// Add +2 pipe bombs for kill
+				AddPrimaryWeaponAmmo(player, 2);
+				break;
+			case Constants.ETFClass.TF_CLASS_SNIPER:
+				local weapon = NetProps.GetPropEntityArray(player, "m_hMyWeapons", 0);
+				if (weapon == null) {
+					return;
+				}
+				// note(jae): 2023-08-13
+				// Making an assumption that only the huntsman has clip ammo
+				if (weapon.UsesClipsForAmmo1()) {
+					// Huntman
+					// Add +2 bow ammo per kill
+					AddPrimaryWeaponAmmo(player, 2);
+				} else {
+					// Sniper Rifle
+					// Add +5 sniper ammo per kill
+					AddPrimaryWeaponAmmo(player, 5);
+				}
+				break;
+			case Constants.ETFClass.TF_CLASS_PYRO:
+				// Add +15 flame thrower ammo per kill
+				AddPrimaryWeaponAmmo(player, 15);
+				break;
+			}
+
+			// Handle morale bonuses.
+			// + Each kill grants a small health bonus and increases current crit bonus by +10.
+			local critBonus = 0;
+			if (player in zf_critBonus) {
+				critBonus = zf_critBonus[player];
+			}
+			if (critBonus != 0) {
+				local health = player.GetHealth();
+				local maxHealth = player.GetMaxHealth();
+				if (health < maxHealth) {
+					health += (critBonus * 2);
+					if (health > maxHealth) {
+						health = maxHealth;
+					}
+					player.SetHealth(health);
+				}
+			}
+			local newCritBonus = critBonus + 10;
+			if (newCritBonus > 100) {
+				newCritBonus = 100;
+			}
+			zf_critBonus[player] <- newCritBonus;
 		}
 		break;
 	}
@@ -1135,7 +1433,7 @@ function OnGameEvent_player_death(params) {
 }
 
 function OnGameEvent_teamplay_setup_finished(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	if (zf_roundState == ZF_ROUND_WAITING ||
@@ -1207,7 +1505,7 @@ function OnGameEvent_teamplay_setup_finished(params) {
 }
 
 function OnGameEvent_player_disconnect(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	local player = GetPlayerFromUserID(params.userid);
@@ -1220,13 +1518,22 @@ function OnGameEvent_player_disconnect(params) {
 	if (player in zf_rageCantUseMessageTimer) {
 		delete zf_rageCantUseMessageTimer[player];
 	}
-	if (player in player_actual_team) {
-		delete player_actual_team[player];
+	if (player in zf_hordeBonus) {
+		delete zf_hordeBonus[player];
+	}
+	if (player in zf_critBonus) {
+		delete zf_critBonus[player];
+	}
+	if (player in zf_playerActualTeam) {
+		delete zf_playerActualTeam[player];
+	}
+	if (player in zf_playerPrimaryWeaponMaxAmmo) {
+		delete zf_playerPrimaryWeaponMaxAmmo[player];
 	}
 }
 
 function OnGameEvent_player_spawn(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	local player = GetPlayerFromUserID(params.userid);
@@ -1239,19 +1546,27 @@ function OnGameEvent_player_spawn(params) {
 		return;
 	}
 
+	// Capture max ammo for primary weapon
+	// - We use this so we can safely add ammo via our AddPrimaryWeaponAmmo function
+	{
+		if (player in zf_playerPrimaryWeaponMaxAmmo) {
+			delete zf_playerPrimaryWeaponMaxAmmo[player];
+		}
+		local weapon = NetProps.GetPropEntityArray(player, "m_hMyWeapons", 0);
+		if (weapon != null && weapon.HasPrimaryAmmo()) {
+			local ammoType = weapon.GetPrimaryAmmoType();
+			local reloadClipAmmo = weapon.Clip1();
+			local ammoCount = NetProps.GetPropIntArray(player, "m_iAmmo", ammoType);
+			zf_playerPrimaryWeaponMaxAmmo[player] <- ammoCount;
+		}
+	}
+
 	// Send welcome message if we haven't done so yet
-	//
-	// note(jae): 2023-08-12
-	// Do this here so any messages about your team being forced / class being forced
-	// come after this.
 	if (!(player in zf_hasWelcomeMessage) || !zf_hasWelcomeMessage[player]) {
 		zf_hasWelcomeMessage[player] <- true;
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Welcome to Zombie Fortress Classic!");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Welcome to Zombie Fortress Classic!");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Type !help to get more information");
-		if (zf_debugDevMode) {
-			ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF DEBUG MODE ENABLED]");
-		}
+
+		// Fire with a 4 second delay so it definitely comes after player or bot join messages
+		EntFireByHandle(player, "RunScriptCode", "SW_WelcomeMessage()", 4.0, null, null);
 	}
 
 	// If no longer in waiting period, force player to team
@@ -1259,11 +1574,11 @@ function OnGameEvent_player_spawn(params) {
 		// If player spawned and...
 		// - Has no assigned team, force onto zombie team
 		// - Has changed to team they're not meant to be on, force back
-		local hasTeam = (player in player_actual_team);
-		if (!hasTeam || team != player_actual_team[player]) {
+		local hasTeam = (player in zf_playerActualTeam);
+		if (!hasTeam || team != zf_playerActualTeam[player]) {
 			if (!hasTeam) {
 				// If game started, force player onto zombie team
-				player_actual_team[player] <- zombieTeamNumber;
+				zf_playerActualTeam[player] <- zombieTeamNumber;
 
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Joined mid-game, you're on the zombie team!");
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Joined mid-game, you're on the zombie team!");
@@ -1272,8 +1587,8 @@ function OnGameEvent_player_spawn(params) {
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Cannot change your team!");
 				ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Cannot change your team!");
 			}
-			if (team != player_actual_team[player]) {
-				player.ForceChangeTeam(player_actual_team[player], true);
+			if (team != zf_playerActualTeam[player]) {
+				player.ForceChangeTeam(zf_playerActualTeam[player], true);
 				player.ForceRegenerateAndRespawn();
 				return;
 			}
@@ -1329,7 +1644,7 @@ function OnGameEvent_player_spawn(params) {
 			ChangeClass(player, defaultHumanClass);
 
 			ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Must select a valid survivor class: Soldier, Pyro, Demoman, Engineer, Medic or Sniper");
-			ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Must select a valid zombie class: Soldier, Pyro, Demoman, Engineer, Medic or Sniper.");
+			ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Must select a valid survivor class: Soldier, Pyro, Demoman, Engineer, Medic or Sniper.");
 			return;
 		}
 		break;
@@ -1346,7 +1661,7 @@ function OnGameEvent_player_spawn(params) {
 }
 
 function OnGameEvent_post_inventory_application(params) {
-	if (!hasInitialized) {
+	if (!zf_hasInitialized) {
 		return;
 	}
 	if(!("userid" in params) || params.userid == 0) {
@@ -1448,34 +1763,24 @@ function OnGameEvent_post_inventory_application(params) {
 	switch (player.GetPlayerClass()) {
 	case Constants.ETFClass.TF_CLASS_SCOUT:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Scout [Zombie]");
-		// todo(jae): 2023-08-09
+		// todo(jae): 2023-08-09 - https://github.com/silbinarywolf/sw-zombie-fortress/issues/15
 		// Allow other weapons, original redux copy says "Bats / Drinks / gullotine only"
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Weapon: Bats only.");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Nerf: Speed reduced to 350 (from 400).");
-		// todo(jae): 2023-08-09
-		// Add speed buff, original redux copy says "Rage ability: Increase speed and health"
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increase health by calling for medic. Recharges after 30s.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increased speed and health by calling for medic. Recharges after 30s.");
 		break;
 	case Constants.ETFClass.TF_CLASS_SNIPER:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Sniper [Survivor/Support]");
-		// todo(jae): 2023-08-09
-		// Add 5 rifle ammo or 2 huntsman ammo per kill
-		// ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buffs: Gains 5 Rifle/2 Huntman ammo per kill.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Gains 5 Rifle/2 Huntman ammo per kill.");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: SMGs don't have to reload.");
 		break;
 	case Constants.ETFClass.TF_CLASS_SOLDIER:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Soldier [Survivor/Assault]");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- No changes");
-		// todo(jae): 2023-08-10
-		// Add 2 rockets per kill
-		//ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buffs: Gains 2 rockets per kill.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Gains 2 rockets per kill.");
 		break;
 	case Constants.ETFClass.TF_CLASS_DEMOMAN:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Demoman [Survivor/Assault]");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- No changes");
-		// todo(jae): 2023-08-10
-		// Gains 2 pipes per kill.
-		//ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buffs: Gains 2 pipes per kill.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Gains 2 pipe bombs per kill.");
 		break;
 	case Constants.ETFClass.TF_CLASS_MEDIC:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Medic [Survivor/Support]");
@@ -1484,30 +1789,23 @@ function OnGameEvent_post_inventory_application(params) {
 	break;
 	case Constants.ETFClass.TF_CLASS_HEAVYWEAPONS:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Heavy [Zombie]");
-		// todo(jae): 2023-08-10
+		// todo(jae): 2023-08-10 - https://github.com/silbinarywolf/sw-zombie-fortress/issues/15
 		// Allow food + gloves
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Weapon: Fists only.");
-		// todo(jae): 2023-08-09
-		// Add speed buff, original redux copy says "Rage ability: Increase speed and health"
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increase health by calling for medic. Recharges after 30s.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increased speed and health by calling for medic. Recharges after 30s.");
 	break;
 	case Constants.ETFClass.TF_CLASS_PYRO:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Pyro [Survivor/Assault]");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Nerf: Flamethrowers limited to 125 ammo.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Gains 15 flamethrower ammo per kill.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Airblast costs 1/2.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Nerf: Flamethrowers limited to 100 ammo.");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Nerf: Speed decreased to 240 (from 300).");
-		// todo(jae): 2023-08-10
-		// Update to match ZF Redux, ie.
-		// - give 15 flamethrower ammo per kill
-		// - Nerf to 100 ammo
-		// - Airblast buff, cost 1/2 normal ammo cost
 		break;
 	case Constants.ETFClass.TF_CLASS_SPY:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Spy [Zombie]");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Weapon: Knives and Invisibility Watch only.");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Nerf: Speed reduced to 280 (from 300).");
-		// todo(jae): 2023-08-09
-		// Add speed buff, original redux copy says "Rage ability: Increase speed and health"
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increase health by calling for medic. Recharges after 30s.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage ability: Increased speed and health by calling for medic. Recharges after 30s.");
 		break;
 	case Constants.ETFClass.TF_CLASS_ENGINEER:
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Engineer [Survivor/Support]");
@@ -1528,10 +1826,10 @@ function OnGameEvent_post_inventory_application(params) {
 		return;
 	}
 	switch (text) {
-	case "!dw": {
-		// debug win
-		// - will auto-win the game for the person using the command
+	case "!ds": {
+		// debug skip wait / setup time
 		// - if round isn't started, cancel waiting for players
+		// - if round is in setup, lower setup time to 1.
 		if (zf_roundState == ZF_ROUND_WAITING) {
 			// Skip waiting time
 			Convars.SetValue("mp_waitingforplayers_cancel", "1");
@@ -1543,23 +1841,38 @@ function OnGameEvent_post_inventory_application(params) {
 			})
 			break;
 		}
-		local game_round_win = SpawnEntityFromTable("game_round_win", {
-			TeamNum=player.GetTeam(),
-			force_map_reset=false,
-			switch_teams=false
-		})
-		EntFireByHandle( game_round_win, "RoundWin", "", 0, null, null );
+		if (zf_roundState == ZF_ROUND_IN_SETUP) {
+			// Lower setup time to 1.0
+			local team_round_timer = Entities.FindByClassname(null, "team_round_timer");
+			if (team_round_timer != null) {
+				EntFireByHandle( team_round_timer, "SetSetupTime", "1.0", 0, null, null );
+			}
+			break;
+		}
 		break;
+	}
+	case "!dh": {
+		// Hurt self. This was put in to test zombie healing quicker + horde bonuses
+		local health = player.GetHealth();
+		if (health == 0) {
+			break;
+		}
+		health /= 2;
+		if (health < 1) {
+			break;
+		}
+		player.SetHealth(health/2);
 	}
 	}
 }
 
 function OnGameEvent_player_say(params) {
 	local player = GetPlayerFromUserID(params.userid);
-	if (player == null) {
+	if (player == null || !player.IsValid()) {
 		return;
 	}
 	switch (params.text) {
+	case "!zf":
 	case "!help":
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Zombie Fortress Classic");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76(Ported by SilbinaryWolf, Originally by Sirot, Maintained by Dirtyminuth and ktm)");
@@ -1569,15 +1882,13 @@ function OnGameEvent_player_say(params) {
 	case "!gamemode":
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Zombie Team");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Classes: Scouts, Heavies, and Spies.");
-		// todo(jae): 2023-08-09
-		// Figure out how to do hording calculations
-		// ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "They receive regeneration bonuses for sticking together as a horde.");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buffs: They receive automatic health regeneration.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: They receive regeneration and crit bonuses for sticking together as a horde.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: They receive automatic health regeneration.");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Rage Ability: Rage is activated by calling for medic, which temporarily buffs you. Recharges after 30 seconds.");
 
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x07FFFF76Survivor Team");
 		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Classes: Soldiers, Demomen, Pyros, Engineers, Medics, and Snipers.");
-		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buffs: None.");
+		ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "- Buff: Receive morale boosts for multiple kills in a row. Morale boosts grant crit bonuses.");
 		// todo(jae): 2023-08-09
 		// Figure out how to do morale boosts
 		//ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "They receive morale boosts for multiple kills in a row. Morale boosts grant crit bonuses.");
@@ -1593,4 +1904,103 @@ function OnGameEvent_player_say(params) {
 	}
 }
 
-SW_ZF_Init(this);
+::SW_ZF_Init <- function(is_zombie_map) {
+	if (zf_hasInitialized) {
+		return;
+	}
+	is_zf_map = is_zombie_map;
+
+	// In control point, blue is attacking, so swap the teams
+	local mapname = GetMapName();
+	local is_control_point_map = (
+		startswith(mapname, "cp_") ||
+		startswith(mapname, "workshop/cp_")
+	);
+	if (is_control_point_map) {
+		// Check that defending control points are for RED team, if they are
+		// then swap the zombie teams
+		local should_swap_teams = true;
+		for (local ent = null; ent = Entities.FindByClassname(ent, "team_control_point");) {
+			local team = NetProps.GetPropInt(ent, "m_iTeamNum");
+			control_point_count++;
+			if (team != Constants.ETFTeam.TF_TEAM_RED) {
+				// Don't swap teams if control point is owned by blue
+				should_swap_teams = false;
+				break;
+			}
+		}
+		if (should_swap_teams) {
+			humanTeamNumber = Constants.ETFTeam.TF_TEAM_BLUE;
+			zombieTeamNumber = Constants.ETFTeam.TF_TEAM_RED;
+		}
+	}
+
+	local is_payload_map = (
+		startswith(mapname, "pl_") ||
+		startswith(mapname, "workshop/pl_")
+	);
+	if (is_payload_map) {
+		// Swap teams for payload
+		humanTeamNumber = Constants.ETFTeam.TF_TEAM_BLUE;
+		zombieTeamNumber = Constants.ETFTeam.TF_TEAM_RED;
+	}
+
+	// note(jae): 2023-08-05
+	// Doesn't work, but I tried.
+	// local tags = Convars.GetStr("sv_tags");
+	// if (tags != null) {
+	// 	Convars.SetValue("sv_tags", tags+",zf");
+	// }
+
+	// Game settings
+	Convars.SetValue("tf_forced_holiday", 2); // force halloween mode, this also makes "Voodoo-Cursed_Soul" work
+	Convars.SetValue("mp_scrambleteams_auto", 0);
+	Convars.SetValue("tf_classlimit", 0);
+	Convars.SetValue("mp_autoteambalance", 0);
+	Convars.SetValue("mp_teams_unbalance_limit", 0);
+	// Convars.SetValue("mp_disable_respawn_times", 0)
+	Convars.SetValue("tf_dropped_weapon_lifetime", 0);
+	Convars.SetValue("mp_stalemate_timelimit", 9999999);
+	Convars.SetValue("mp_scrambleteams_auto_windifference", 0);
+	Convars.SetValue("sv_vote_issue_autobalance_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
+	Convars.SetValue("sv_vote_issue_scramble_teams_allowed", "0"); // intentionally string, copied from 2 other vscript plugins
+
+	// Bots
+	Convars.SetValue("tf_bot_keep_class_after_death", true);
+	Convars.SetValue("tf_bot_reevaluate_class_in_spawnroom", 0);
+
+	// Engineer
+	Convars.SetValue("tf_obj_upgrade_per_hit", 0); // Locked
+	Convars.SetValue("tf_sentrygun_metal_per_shell", 201); // Locked
+
+	// Medic
+	Convars.SetValue("weapon_medigun_charge_rate", 30); // Locked, Default 40
+	Convars.SetValue("weapon_medigun_chargerelease_rate", 6); // Locked, Default 8
+	Convars.SetValue("tf_max_health_boost", 1.25); // Locked, Default 1.5
+	Convars.SetValue("tf_boost_drain_time", 3600); // Locked, Default 15.0, Time it takes for a health boost to degrade.
+
+	// Spy
+	Convars.SetValue("tf_spy_invis_time", 0.5);
+	Convars.SetValue("tf_spy_invis_unstealth_time", 0.75);
+	Convars.SetValue("tf_spy_cloak_no_attack_time", 1.0);
+	// Effectively makes cloak 20% smaller.
+	Convars.SetValue("tf_spy_cloak_consume_rate", 12.5); // Default: 10, consumes 10 per second out of 100.
+
+	// Pyro
+	Convars.SetValue("tf_flamethrower_burstammo", 10) // Default: 20, 1/2 compression blast cost.
+
+	// DEBUG: Swap teams (I used this to quickly test engineer logic)
+	// local oldHumanTeam = humanTeamNumber;
+	// humanTeamNumber <- zombieTeamNumber;
+	// zombieTeamNumber <- oldHumanTeam;
+
+	zf_hasInitialized = true;
+	ClearGameEventCallbacks();
+	__CollectGameEventCallbacks(this);
+
+	if (zf_config.force_enabled) {
+		printl("[ZF] Zombie Fortress mode is enabled for all maps");
+	} else {
+		printl("[ZF] Zombie Fortress mode is enabled for this map");
+	}
+}
