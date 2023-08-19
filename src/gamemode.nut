@@ -19,7 +19,7 @@
 // Debug quicker:
 // - Skip wait/setup time - enable "zf_debugDevMode <- true" and type "!ds" to skip waiting/setup time
 
-SW_ZF_VERSION <- "0.3.0"
+SW_ZF_VERSION <- "0.4.0"
 
 ZF_ROUND_WAITING  <- 1;
 ZF_ROUND_IN_SETUP <- 2;
@@ -107,6 +107,7 @@ tf_gamerules <- null;
 	if (player == null || !player.IsValid()) {
 		return;
 	}
+	zf_hasWelcomeMessage[player] <- true;
 	ClientPrint(player, Constants.EHudNotify.HUD_PRINTCENTER, "Welcome to Zombie Fortress Classic!");
 	ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Welcome to Zombie Fortress Classic! Version " + SW_ZF_VERSION);
 	ClientPrint(player, Constants.EHudNotify.HUD_PRINTTALK, "\x05[ZF]\x01 Type !help to get more information");
@@ -278,7 +279,7 @@ tf_gamerules <- null;
 	}
 
 	// 2. Handle survivor crit bonus rules.
-    //    Decrement morale bonus by -3 per second (main timer).
+	//    Decrement morale bonus by -3 per second (main timer).
 	if (player in zf_critBonus) {
 		local critBonus = zf_critBonus[player];
 		if (critBonus > 0) {
@@ -484,9 +485,9 @@ tf_gamerules <- null;
 		}
 		break;
 	}
-    case ZF_SPAWNSTATE_FRENZY: {
+	case ZF_SPAWNSTATE_FRENZY: {
 		// 1c. Frenzy state (short spawn times). Transition to Rest
-    	//     state after a given number of zombies are killed.
+		//     state after a given number of zombies are killed.
 		if (zf_spawnZombiesKilledCounter <= 0) {
 			local zombieTeamCount = GetZombieTeamCount();
 			zf_spawnState = ZF_SPAWNSTATE_REST;
@@ -498,7 +499,7 @@ tf_gamerules <- null;
 			SetZombieSpawnTime(16.0);
 		}
 		break;
-    }
+	}
 	}
 }
 
@@ -940,12 +941,12 @@ tickFiveSecondCounter <- 0;
 
 // Based on: https://stackoverflow.com/a/2450976/5013410
 ::ShuffleArray <- function(array) {
-	local currentIndex = array.len() - 1;
+	local currentIndex = array.len();
 
 	// While there remain elements to shuffle.
 	while (currentIndex > 0) {
 		// Pick a remaining element.
-		local randomIndex = RandomInt(0, currentIndex);
+		local randomIndex = RandomInt(0, currentIndex - 1);
 		currentIndex--;
 
 		// And swap it with the current element.
@@ -1008,21 +1009,21 @@ function OnGameEvent_teamplay_round_start(params) {
 	team_round_timer.ValidateScriptScope();
 	AddThinkToEnt(team_round_timer, "TickEverySecond");
 
-	// Update game rules
-	//
-	// note(jae): 2023-08-12
-	// This seemingly works now but I can't test it because this goal hint
-	// doesn't show up for me anymore. Not sure how to work around this...
+	// Store game rules to update spawn time and update the goal for non-ZF maps.
 	tf_gamerules = Entities.FindByClassname(null, "tf_gamerules");
-	if (tf_gamerules != null && tf_gamerules.ValidateScriptScope()) {
-		local humanGoal = "Survive the zombies";
-		local zombieGoal = "Kill all survivors";
-		if (humanTeamNumber == Constants.ETFTeam.TF_TEAM_RED) {
-			EntFireByHandle(tf_gamerules, "SetBlueTeamGoalString", zombieGoal, 1.0, null, null);
-			EntFireByHandle(tf_gamerules, "SetRedTeamGoalString", humanGoal, 1.0, null, null);
-		} else {
-			EntFireByHandle(tf_gamerules, "SetBlueTeamGoalString", humanGoal, 1.0, null, null);
-			EntFireByHandle(tf_gamerules, "SetRedTeamGoalString", zombieGoal, 1.0, null, null);
+
+	// If not playing a zombie map, update the goals
+	if (!is_zf_map) {
+		if (tf_gamerules != null && tf_gamerules.ValidateScriptScope()) {
+			local humanGoal = "Survive the zombies and complete the objective";
+			local zombieGoal = "Kill all survivors";
+			if (humanTeamNumber == Constants.ETFTeam.TF_TEAM_RED) {
+				EntFireByHandle(tf_gamerules, "SetBlueTeamGoalString", zombieGoal, 1.0, null, null);
+				EntFireByHandle(tf_gamerules, "SetRedTeamGoalString", humanGoal, 1.0, null, null);
+			} else {
+				EntFireByHandle(tf_gamerules, "SetBlueTeamGoalString", humanGoal, 1.0, null, null);
+				EntFireByHandle(tf_gamerules, "SetRedTeamGoalString", zombieGoal, 1.0, null, null);
+			}
 		}
 	}
 
@@ -1563,10 +1564,8 @@ function OnGameEvent_player_spawn(params) {
 
 	// Send welcome message if we haven't done so yet
 	if (!(player in zf_hasWelcomeMessage) || !zf_hasWelcomeMessage[player]) {
-		zf_hasWelcomeMessage[player] <- true;
-
-		// Fire with a 4 second delay so it definitely comes after player or bot join messages
-		EntFireByHandle(player, "RunScriptCode", "SW_WelcomeMessage()", 4.0, null, null);
+		// Fire with a 12 second delay so it definitely comes after player or bot join messages
+		EntFireByHandle(player, "RunScriptCode", "SW_WelcomeMessage()", 12.0, null, null);
 	}
 
 	// If no longer in waiting period, force player to team
